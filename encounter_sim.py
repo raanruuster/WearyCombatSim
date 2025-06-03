@@ -6,6 +6,38 @@ from typing import List, Tuple, Dict
 import subprocess
 import sys
 
+# Player and enemy color schemes
+PLAYER_COLORS = ["blue", "green", "orange", "red", "violet", "rainbow"]
+ENEMY_TYPE_COLORS = {
+    "Minion": "gray",
+    "Soldier": "blue",
+    "Elite": "violet",
+    "Boss": "red",
+}
+
+
+def get_player_color(player_idx: int) -> str:
+    """Get consistent color for a player."""
+    return PLAYER_COLORS[player_idx % len(PLAYER_COLORS)]
+
+
+def get_enemy_color(enemy_type: str) -> str:
+    """Get color for enemy type."""
+    return ENEMY_TYPE_COLORS.get(enemy_type, "gray")
+
+
+def format_player_name(player_idx: int, style: str) -> str:
+    """Format player name with color."""
+    color = get_player_color(player_idx)
+    return f":{color}[**Player {player_idx + 1}**] ({style})"
+
+
+def format_enemy_name(enemy_name: str) -> str:
+    """Format enemy name with color based on type."""
+    enemy_type = enemy_name.split("_")[0]
+    color = get_enemy_color(enemy_type)
+    return f":{color}[**{enemy_name}**]"
+
 
 # comment
 @dataclass
@@ -55,12 +87,56 @@ class Enemy:
         return rng.integers(1, die_size + 1, num_dice).sum() + bonus
 
 
+def format_hp_change(old_hp: int, new_hp: int) -> str:
+    """Format HP change with color."""
+    if new_hp > old_hp:
+        return f"**{old_hp}** → :green[**{new_hp}**]"
+    elif new_hp < old_hp:
+        return f"**{old_hp}** → :red[**{new_hp}**]"
+    else:
+        return f"**{old_hp}** → **{new_hp}**"
+
+
+def format_damage_calc(raw: int, prof: int, bonus: int, total: int) -> str:
+    """Format damage calculation with color."""
+    return f":blue[{raw}] + {prof} (prof) + {bonus} (bonus) = :blue[**{total}**]"
+
+
+def add_custom_css():
+    """Add custom CSS for better visual styling."""
+    st.markdown(
+        """
+    <style>
+    .round-container {
+        border: 2px solid #e0e0e0;
+        border-radius: 10px;
+        padding: 15px;
+        margin: 10px 0;
+        background-color: #f8f9fa;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .combat-log {
+        font-family: 'Courier New', monospace;
+        background-color: #1e1e1e;
+        color: #ffffff;
+        padding: 15px;
+        border-radius: 8px;
+        max-height: 600px;
+        overflow-y: auto;
+    }
+    </style>
+    """,
+        unsafe_allow_html=True,
+    )
+
+
 def simulate_encounter(
     party: List[Character], enemies: List[Enemy], n_iters: int, rng: np.random.Generator
 ) -> pd.DataFrame:
     """Run Monte Carlo simulation of encounters."""
     results = []
-    combat_logs = []  # Store combat logs for each iteration
+    combat_logs = []
+    turn_economy_data = []
 
     # Create enemy names based on their position in the enemy groups list
     def get_enemy_name(enemy_idx: int, enemies: List[Enemy]) -> str:
@@ -104,13 +180,23 @@ def simulate_encounter(
         enemy_names = [get_enemy_name(idx, enemies) for idx in range(len(enemies))]
         round_num = 0
         combat_log = []
-        result_recorded = (
-            False  # Flag to ensure we only record one result per simulation
-        )
+        result_recorded = False
+        first_casualty_round = None  # Track when first player falls
 
-        while round_num < 100:  # Cap at 100 rounds
+        # Turn economy tracking
+        turn_data = {
+            "player_actions": 0,
+            "enemy_actions": 0,
+            "total_player_damage": 0,
+            "total_enemy_damage": 0,
+            "stamina_spent": 0,
+            "rounds": 0,
+        }
+
+        while round_num < 100:
             round_num += 1
-            round_log = [f"Round {round_num}:"]
+            round_log = [f"## 🎲 Round {round_num}"]
+            turn_data["rounds"] = round_num
 
             # Determine initiative order for this round
             initiative_order = get_initiative_order(len(party), len(enemies), rng)
@@ -118,7 +204,6 @@ def simulate_encounter(
             # Each combatant takes their turn in initiative order
             for combatant_type, idx in initiative_order:
                 if combatant_type == "player":
-                    # Player's turn
                     if party_hp[idx] <= 0:
                         continue
 
@@ -127,7 +212,6 @@ def simulate_encounter(
                         char.max_swings, party_hp[idx] // char.stamina_cost
                     )
 
-                    # If character has multiple possible swings, randomly choose how many to use this round
                     if max_possible_swings > 1:
                         chosen_swings = rng.integers(1, max_possible_swings + 1)
                     else:
@@ -137,8 +221,8 @@ def simulate_encounter(
                         if party_hp[idx] >= char.stamina_cost:
                             old_hp = party_hp[idx]
                             party_hp[idx] -= char.stamina_cost
+                            turn_data["stamina_spent"] += char.stamina_cost
 
-                            # Deal damage to first alive enemy
                             for e_idx in range(len(enemy_hp)):
                                 if enemy_hp[e_idx] > 0:
                                     raw_damage = char.roll_damage(rng)
@@ -153,28 +237,39 @@ def simulate_encounter(
                                     old_enemy_hp = enemy_hp[e_idx]
                                     enemy_hp[e_idx] -= net_damage
 
-                                    # Log the attack
-                                    if (
-                                        swing == 0
-                                    ):  # Only show chosen swings info on first attack
-                                        if max_possible_swings > 1:
-                                            action = f"Player {idx + 1} ({char.style}) chooses to make {chosen_swings} attacks this round:"
-                                            round_log.append(action)
-                                    action = f"Player {idx + 1} ({char.style}) attacks {enemy_names[e_idx]}:"
-                                    action += f"\n  Roll: {raw_damage} + {char.proficiency} (prof) + {char.bonus_damage} (bonus) = {total_damage}"
-                                    action += f"\n  DR {enemies[e_idx].dr} reduces to {net_damage} damage"
+                                    # Track turn economy
+                                    turn_data["player_actions"] += 1
+                                    turn_data["total_player_damage"] += net_damage
+
+                                    # Log the attack with colors
+                                    if swing == 0 and max_possible_swings > 1:
+                                        action = f"### 🎯 {format_player_name(idx, char.style)} chooses to make :blue[{chosen_swings}] attacks this round"
+                                        round_log.append(action)
+
+                                    action = [
+                                        f"#### ⚔️ {format_player_name(idx, char.style)} attacks {format_enemy_name(enemy_names[e_idx])}:",
+                                        f"- Roll: {format_damage_calc(raw_damage, char.proficiency, char.bonus_damage, total_damage)}",
+                                        f"- DR {enemies[e_idx].dr} reduces to :orange[**{net_damage}**] damage",
+                                    ]
+
                                     if enemy_hp[e_idx] <= 0:
-                                        action += f"\n  {enemy_names[e_idx]} perishes! ({old_enemy_hp} → 0)"
+                                        action.append(
+                                            f"- 💀 {format_enemy_name(enemy_names[e_idx])} perishes! ({format_hp_change(old_enemy_hp, 0)})"
+                                        )
                                     else:
-                                        action += f"\n  {enemy_names[e_idx]} HP: {old_enemy_hp} → {enemy_hp[e_idx]}"
-                                    action += f"\n  Player {idx + 1} HP: {old_hp} → {party_hp[idx]} (after stamina cost)"
-                                    round_log.append(action)
+                                        action.append(
+                                            f"- {format_enemy_name(enemy_names[e_idx])} HP: {format_hp_change(old_enemy_hp, enemy_hp[e_idx])}"
+                                        )
+
+                                    action.append(
+                                        f"- {format_player_name(idx, char.style)} HP: {format_hp_change(old_hp, party_hp[idx])} (after stamina cost)"
+                                    )
+                                    round_log.append("\n".join(action))
                                     break
 
-                            # Check if all enemies defeated after this attack
                             if all(hp <= 0 for hp in enemy_hp) and not result_recorded:
-                                round_log.append("All enemies defeated!")
-                                combat_log.append("\n".join(round_log))
+                                round_log.append("## 🎉 All enemies defeated!")
+                                combat_log.append("\n\n".join(round_log))
                                 results.append(
                                     {
                                         "iteration": i,
@@ -183,6 +278,7 @@ def simulate_encounter(
                                         "surviving_party": sum(
                                             1 for hp in party_hp if hp > 0
                                         ),
+                                        "first_casualty_round": first_casualty_round,
                                     }
                                 )
                                 result_recorded = True
@@ -192,7 +288,6 @@ def simulate_encounter(
                     if enemy_hp[idx] <= 0:
                         continue
 
-                    # Distribute damage across alive party members
                     alive_party = [p_idx for p_idx, hp in enumerate(party_hp) if hp > 0]
                     if alive_party:
                         target_idx = rng.choice(alive_party)
@@ -201,20 +296,35 @@ def simulate_encounter(
                         old_hp = party_hp[target_idx]
                         party_hp[target_idx] -= net_damage
 
-                        # Log the attack
-                        action = f"{enemy_names[idx]} attacks Player {target_idx + 1}:"
-                        action += f"\n  Roll: {raw_damage}"
-                        action += f"\n  DR {party[target_idx].dr} reduces to {net_damage} damage"
+                        # Track turn economy
+                        turn_data["enemy_actions"] += 1
+                        turn_data["total_enemy_damage"] += net_damage
+
+                        # Log the attack with colors
+                        action = [
+                            f"#### 🗡️ {format_enemy_name(enemy_names[idx])} attacks {format_player_name(target_idx, party[target_idx].style)}:",
+                            f"- Roll: :blue[{raw_damage}]",
+                            f"- DR {party[target_idx].dr} reduces to :orange[**{net_damage}**] damage",
+                        ]
+
                         if party_hp[target_idx] <= 0:
-                            action += f"\n  Player {target_idx + 1} is defeated! ({old_hp} → 0)"
+                            action.append(
+                                f"- 💀 {format_player_name(target_idx, party[target_idx].style)} is defeated! ({format_hp_change(old_hp, 0)})"
+                            )
+                            # Record first casualty if not already recorded
+                            if first_casualty_round is None:
+                                first_casualty_round = round_num
                         else:
-                            action += f"\n  Player {target_idx + 1} HP: {old_hp} → {party_hp[target_idx]}"
-                        round_log.append(action)
+                            action.append(
+                                f"- {format_player_name(target_idx, party[target_idx].style)} HP: {format_hp_change(old_hp, party_hp[target_idx])}"
+                            )
+
+                        round_log.append("\n".join(action))
 
             if result_recorded:
                 break
 
-            combat_log.append("\n".join(round_log))
+            combat_log.append("\n\n".join(round_log))
 
             # Check if party can still attack
             can_attack = any(
@@ -225,10 +335,10 @@ def simulate_encounter(
 
             if not can_attack and not result_recorded:
                 if all(hp <= 0 for hp in party_hp):
-                    round_log.append("Total party kill!")
+                    round_log.append("## ☠️ Total party kill!")
                 else:
-                    round_log.append("Party exhausted!")
-                combat_log.append("\n".join(round_log))
+                    round_log.append("## 😫 Party exhausted!")
+                combat_log.append("\n\n".join(round_log))
                 if all(hp <= 0 for hp in party_hp):
                     results.append(
                         {
@@ -236,6 +346,7 @@ def simulate_encounter(
                             "outcome": "tpk",
                             "rounds": round_num,
                             "surviving_enemies": sum(1 for hp in enemy_hp if hp > 0),
+                            "first_casualty_round": first_casualty_round,
                         }
                     )
                 else:
@@ -246,6 +357,7 @@ def simulate_encounter(
                             "rounds": round_num,
                             "surviving_party": sum(1 for hp in party_hp if hp > 0),
                             "surviving_enemies": sum(1 for hp in enemy_hp if hp > 0),
+                            "first_casualty_round": first_casualty_round,
                         }
                     )
                 result_recorded = True
@@ -253,7 +365,7 @@ def simulate_encounter(
 
         if round_num >= 100 and not result_recorded:
             round_log.append("Combat timeout!")
-            combat_log.append("\n".join(round_log))
+            combat_log.append("\n\n".join(round_log))
             results.append(
                 {
                     "iteration": i,
@@ -263,11 +375,15 @@ def simulate_encounter(
             )
             result_recorded = True
 
+        # Store turn economy data
+        turn_data["first_casualty_round"] = first_casualty_round
+        turn_economy_data.append(turn_data.copy())
         combat_logs.append("\n\n".join(combat_log))
 
-    # Store the combat logs in the first result for retrieval
+    # Store additional data in results
     if results:
         results[0]["combat_logs"] = combat_logs
+        results[0]["turn_economy_data"] = turn_economy_data
 
     return pd.DataFrame(results)
 
@@ -290,6 +406,7 @@ def calculate_average_dpr(
 
 def main():
     st.set_page_config(page_title="TTRPG Encounter Simulator", layout="wide")
+    add_custom_css()  # Add custom CSS
     st.title("Turn-Based Combat Encounter Simulator")
 
     # Sidebar controls
@@ -649,7 +766,8 @@ def main():
         st.subheader("Combat Duration Statistics")
 
         if len(victory_df) > 0:
-            col1, col2 = st.columns(2)
+            col1, col2, col3 = st.columns(3)
+
             with col1:
                 st.write("Victory Round Distribution")
                 hist_data = victory_df["rounds"].value_counts().sort_index()
@@ -666,6 +784,27 @@ def main():
                     st.bar_chart(hist_data)
                     st.metric("Median TPK Round", f"{tpk_df['rounds'].median():.1f}")
                     st.metric("Mean TPK Round", f"{tpk_df['rounds'].mean():.1f}")
+
+            with col3:
+                st.write("First Casualty Analysis")
+                casualty_data = results_df[results_df["first_casualty_round"].notna()]
+                if not casualty_data.empty:
+                    hist_data = (
+                        casualty_data["first_casualty_round"]
+                        .value_counts()
+                        .sort_index()
+                    )
+                    st.bar_chart(hist_data)
+                    st.metric(
+                        "Avg Round of First Casualty",
+                        f"{casualty_data['first_casualty_round'].mean():.1f}",
+                    )
+                    st.metric(
+                        "Median Round of First Casualty",
+                        f"{casualty_data['first_casualty_round'].median():.1f}",
+                    )
+                else:
+                    st.metric("First Casualty", "No casualties")
 
         # Encounter Balance Verdict
         st.subheader("Encounter Balance Analysis")
@@ -724,14 +863,95 @@ def main():
             if len(tpk_df) > 0:
                 st.write(f"Average TPK occurs on round {tpk_df['rounds'].mean():.1f}")
 
-        # Add combat log display
+        # NEW: Survival Probability Graph
+        st.subheader("📊 Survival Probability by Round")
+
+        if len(victory_df) > 0:
+            # Calculate survival probability by round
+            max_rounds = victory_df["rounds"].max()
+            survival_prob = []
+            rounds_list = list(range(1, max_rounds + 1))
+
+            for round_num in rounds_list:
+                victories_by_round = len(victory_df[victory_df["rounds"] <= round_num])
+                prob = victories_by_round / len(results_df) * 100
+                survival_prob.append(prob)
+
+            # Create DataFrame for plotting
+            survival_df = pd.DataFrame(
+                {"Round": rounds_list, "Victory Probability %": survival_prob}
+            )
+
+            st.line_chart(survival_df.set_index("Round"))
+
+            # Add some key statistics
+            col1, col2, col3 = st.columns(3)
+            col1.metric(
+                "50% Victory Chance by Round",
+                f"{rounds_list[next((i for i, p in enumerate(survival_prob) if p >= 50), len(rounds_list) - 1)] if survival_prob else 'N/A'}",
+            )
+            col2.metric(
+                "90% Victory Chance by Round",
+                f"{rounds_list[next((i for i, p in enumerate(survival_prob) if p >= 90), len(rounds_list) - 1)] if any(p >= 90 for p in survival_prob) else 'Never'}",
+            )
+            col3.metric("Peak Victory Rate", f"{max(survival_prob):.1f}%")
+
+        # NEW: Turn Economy Analysis
+        st.subheader("⚖️ Turn Economy Analysis")
+
+        if "turn_economy_data" in results_df.iloc[0]:
+            turn_data = results_df.iloc[0]["turn_economy_data"]
+
+            # Calculate averages
+            avg_player_actions = np.mean([d["player_actions"] for d in turn_data])
+            avg_enemy_actions = np.mean([d["enemy_actions"] for d in turn_data])
+            avg_player_damage = np.mean([d["total_player_damage"] for d in turn_data])
+            avg_enemy_damage = np.mean([d["total_enemy_damage"] for d in turn_data])
+            avg_stamina_spent = np.mean([d["stamina_spent"] for d in turn_data])
+            avg_rounds = np.mean([d["rounds"] for d in turn_data])
+
+            # Calculate efficiency metrics
+            damage_per_action = (
+                avg_player_damage / avg_player_actions if avg_player_actions > 0 else 0
+            )
+            damage_per_stamina = (
+                avg_player_damage / avg_stamina_spent if avg_stamina_spent > 0 else 0
+            )
+            actions_per_round = avg_player_actions / avg_rounds if avg_rounds > 0 else 0
+
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Avg Player Actions", f"{avg_player_actions:.1f}")
+            col2.metric("Avg Enemy Actions", f"{avg_enemy_actions:.1f}")
+            col3.metric(
+                "Action Economy Ratio",
+                f"{avg_player_actions / avg_enemy_actions:.2f}"
+                if avg_enemy_actions > 0
+                else "∞",
+            )
+            col4.metric("Actions per Round", f"{actions_per_round:.1f}")
+
+            st.subheader("📈 Efficiency Metrics")
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Damage per Action", f"{damage_per_action:.1f}")
+            col2.metric("Damage per Stamina", f"{damage_per_stamina:.1f}")
+            col3.metric(
+                "Stamina Efficiency",
+                f"{(avg_player_damage / avg_stamina_spent) * 100:.1f}%"
+                if avg_stamina_spent > 0
+                else "N/A",
+            )
+
+        # Update combat log display with styling
         st.sidebar.markdown("---")
         with st.sidebar.expander("📜 Sample Combat Log", expanded=False):
             if "combat_logs" in results_df.iloc[0]:
-                # Pick a random combat log from the available logs
                 combat_logs = results_df.iloc[0]["combat_logs"]
                 sample_idx = rng.integers(0, len(combat_logs))
-                st.text(combat_logs[sample_idx])
+
+                # Apply styling to combat log
+                st.markdown('<div class="round-container">', unsafe_allow_html=True)
+                st.markdown(combat_logs[sample_idx])
+                st.markdown("</div>", unsafe_allow_html=True)
             else:
                 st.write("No combat log available")
 
