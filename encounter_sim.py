@@ -246,28 +246,28 @@ def simulate_encounter(
 
                                     # Log the attack with colors
                                     if swing == 0 and max_possible_swings > 1:
-                                        action = f"### 🎯 {format_player_name(idx, char.style)} chooses to make :blue[{chosen_swings}] attacks this round"
-                                        round_log.append(action)
+                                        action_msg = f"### 🎯 {format_player_name(idx, char.style)} chooses to make :blue[{chosen_swings}] attacks this round"
+                                        round_log.append(action_msg)
 
-                                    action = [
+                                    action_list = [
                                         f"#### ⚔️ {format_player_name(idx, char.style)} attacks {format_enemy_name(enemy_names[e_idx])}:",
                                         f"- Roll: {format_damage_calc(raw_damage, char.proficiency, char.bonus_damage, total_damage)}",
                                         f"- DR {enemies[e_idx].dr} reduces to :orange[**{net_damage}**] damage",
                                     ]
 
                                     if enemy_hp[e_idx] <= 0:
-                                        action.append(
+                                        action_list.append(
                                             f"- 💀 {format_enemy_name(enemy_names[e_idx])} perishes! ({format_hp_change(old_enemy_hp, 0)})"
                                         )
                                     else:
-                                        action.append(
+                                        action_list.append(
                                             f"- {format_enemy_name(enemy_names[e_idx])} HP: {format_hp_change(old_enemy_hp, enemy_hp[e_idx])}"
                                         )
 
-                                    action.append(
+                                    action_list.append(
                                         f"- {format_player_name(idx, char.style)} HP: {format_hp_change(old_hp, party_hp[idx])} (after stamina cost)"
                                     )
-                                    round_log.append("\n".join(action))
+                                    round_log.append("\n".join(action_list))
                                     break
 
                             if all(hp <= 0 for hp in enemy_hp) and not result_recorded:
@@ -304,25 +304,25 @@ def simulate_encounter(
                         turn_data["total_enemy_damage"] += net_damage
 
                         # Log the attack with colors
-                        action = [
+                        action_list = [
                             f"#### 🗡️ {format_enemy_name(enemy_names[idx])} attacks {format_player_name(target_idx, party[target_idx].style)}:",
                             f"- Roll: :blue[{raw_damage}]",
                             f"- DR {party[target_idx].dr} reduces to :orange[**{net_damage}**] damage",
                         ]
 
                         if party_hp[target_idx] <= 0:
-                            action.append(
+                            action_list.append(
                                 f"- 💀 {format_player_name(target_idx, party[target_idx].style)} is defeated! ({format_hp_change(old_hp, 0)})"
                             )
                             # Record first casualty if not already recorded
                             if first_casualty_round is None:
                                 first_casualty_round = round_num
                         else:
-                            action.append(
+                            action_list.append(
                                 f"- {format_player_name(target_idx, party[target_idx].style)} HP: {format_hp_change(old_hp, party_hp[target_idx])}"
                             )
 
-                        round_log.append("\n".join(action))
+                        round_log.append("\n".join(action_list))
 
             if result_recorded:
                 break
@@ -558,6 +558,38 @@ def main():
     st.set_page_config(page_title="TTRPG Encounter Simulator", layout="wide")
     add_custom_css()
     st.title("Turn-Based Combat Encounter Simulator")
+
+    # --- Apply pending encounter configuration BEFORE creating any widgets ---
+    if "builder_pending_config" in st.session_state:
+        config = st.session_state.builder_pending_config
+        for i in range(4):
+            st.session_state[f"sim_enemy_count_{i}"] = config[f"count_{i}"]
+            st.session_state[f"sim_enemy_hp_{i}"] = config[f"hp_{i}"]
+            st.session_state[f"sim_enemy_dr_{i}"] = config[f"dr_{i}"]
+            st.session_state[f"sim_enemy_dice_{i}"] = config[f"dice_{i}"]
+
+        # Clear the pending config and show success message
+        del st.session_state.builder_pending_config
+        st.success(
+            "✅ Encounter applied to simulator! Check the sidebar configuration."
+        )
+
+    # --- Initialize enemy widget defaults if not already set ---
+    enemy_defaults = [
+        {"count": 5, "hp": 5, "dr": 0, "dice": "1d4+1"},  # Minions
+        {"count": 3, "hp": 10, "dr": 2, "dice": "2d6"},  # Soldiers
+        {"count": 0, "hp": 20, "dr": 3, "dice": "2d6+3"},  # Elites
+        {"count": 0, "hp": 40, "dr": 4, "dice": "3d6+4"},  # Boss
+    ]
+    for i in range(4):
+        if f"sim_enemy_count_{i}" not in st.session_state:
+            st.session_state[f"sim_enemy_count_{i}"] = enemy_defaults[i]["count"]
+        if f"sim_enemy_hp_{i}" not in st.session_state:
+            st.session_state[f"sim_enemy_hp_{i}"] = enemy_defaults[i]["hp"]
+        if f"sim_enemy_dr_{i}" not in st.session_state:
+            st.session_state[f"sim_enemy_dr_{i}"] = enemy_defaults[i]["dr"]
+        if f"sim_enemy_dice_{i}" not in st.session_state:
+            st.session_state[f"sim_enemy_dice_{i}"] = enemy_defaults[i]["dice"]
 
     # Sidebar controls - defined once, globally for the app
     with st.sidebar:
@@ -808,33 +840,21 @@ def main():
                         f"Number of {group['name']}",
                         min_value=0,
                         max_value=20,
-                        value=preset_values["count"]
-                        if preset_values
-                        else (5 if i == 0 else (3 if i == 1 else 0)),
                         key=f"sim_enemy_count_{i}",
                     )
                     hp = st.number_input(
                         "HP per Enemy",
                         min_value=1,
-                        value=preset_values["hp"]
-                        if preset_values
-                        else group["default_hp"],
                         key=f"sim_enemy_hp_{i}",
                     )
                 with col2:
                     dr = st.number_input(
                         "DR",
                         min_value=0,
-                        value=preset_values["dr"]
-                        if preset_values
-                        else (2 if i == 1 else 0),
                         key=f"sim_enemy_dr_{i}",
                     )
                     damage_dice = st.text_input(
                         "Damage Dice",
-                        value=preset_values["damage"]
-                        if preset_values
-                        else group["default_dice"],
                         key=f"sim_enemy_dice_{i}",
                     )
                 for _ in range(count):
@@ -1056,241 +1076,268 @@ def main():
 
     with tab1:  ########## COMBAT SIMULATOR TAB ##########
         st.header("Simulate a Combat Encounter")
+
+        # Initialize results_df and display variables to safe defaults
+        results_df = pd.DataFrame()
+        party_dpr_display = 0.0
+        enemy_dpr_total_display = 0.0
+        # Initialize other DataFrames that might be checked by display logic later
+        victory_df = pd.DataFrame()
+        tpk_df = pd.DataFrame()
+
         if run_sim_button:
             if not enemies_for_simulator:
                 st.error("Please add at least one enemy to simulate!")
             else:
-                rng = np.random.default_rng(seed)
+                rng = np.random.default_rng(seed)  # Define rng here
                 with st.spinner("Running simulation..."):
-                    results_df = simulate_encounter(
+                    # Simulate encounter
+                    results_df_sim = simulate_encounter(
                         party, enemies_for_simulator, 10000, rng
                     )
 
-                    # Calculate metrics
-                    victory_df = results_df[results_df["outcome"] == "victory"]
-                    tpk_df = results_df[results_df["outcome"] == "tpk"]
-                    # exhaustion_df = results_df[results_df["outcome"] == "exhaustion"] # Not currently used
+                if not results_df_sim.empty:
+                    results_df = results_df_sim  # Assign to the main results_df
 
-                    # Display average DPR
-                    st.subheader("Average Damage Per Round")
-                    party_dpr = calculate_average_dpr(party, rng)
-                    enemy_dpr_total = 0
+                    # Calculate DPRs as rng and party/enemies are available here
+                    party_dpr_display = calculate_average_dpr(party, rng)
+
+                    current_enemy_dpr_total = 0
                     for enemy_obj in enemies_for_simulator:
                         temp_total = 0
-                        n_samples_dpr = 1000
-                        for _ in range(n_samples_dpr):
+                        n_samples_dpr_calc = 1000  # Use a different var name to avoid conflict if n_samples_dpr is used elsewhere
+                        for _ in range(n_samples_dpr_calc):
                             temp_total += enemy_obj.roll_damage(rng)
-                        enemy_dpr_total += temp_total / n_samples_dpr
-                    col1_dpr, col2_dpr = st.columns(2)
-                    col1_dpr.metric("Party Average DPR", f"{party_dpr:.1f}")
-                    col2_dpr.metric("Enemy Total DPR", f"{enemy_dpr_total:.1f}")
+                        current_enemy_dpr_total += temp_total / n_samples_dpr_calc
+                    enemy_dpr_total_display = current_enemy_dpr_total
 
-                    # Outcome summary with percentages
-                    st.subheader("Combat Outcomes")
-                    total_sims = len(results_df)
-                    col1_outcome, col2_outcome = st.columns(2)
-                    victory_pct = (
-                        len(victory_df) / total_sims * 100 if total_sims > 0 else 0
+                    # Define victory_df and tpk_df here if results_df is populated
+                    victory_df = results_df[results_df["outcome"] == "victory"]
+                    tpk_df = results_df[results_df["outcome"] == "tpk"]
+                else:
+                    st.warning(
+                        "Simulation ran but produced no results. Displaying defaults."
                     )
-                    tpk_pct = len(tpk_df) / total_sims * 100 if total_sims > 0 else 0
-                    col1_outcome.metric(
-                        "Victories", f"{len(victory_df):,} ({victory_pct:.1f}%)"
+                    # results_df remains empty, dpr_display vars remain 0.0
+                    # victory_df and tpk_df remain empty DataFrames
+        else:  # if not run_sim_button
+            st.info("Click 'Run Simulation' in the sidebar to view encounter results.")
+
+        # --- Display sections ---
+        # These sections will now use the initialized or populated variables.
+
+        # Display average DPR
+        st.subheader("Average Damage Per Round")
+        col1_dpr, col2_dpr = st.columns(2)
+        col1_dpr.metric("Party Average DPR", f"{party_dpr_display:.1f}")
+        col2_dpr.metric("Enemy Total DPR", f"{enemy_dpr_total_display:.1f}")
+
+        # Outcome summary with percentages
+        st.subheader("Combat Outcomes")
+        if not results_df.empty:
+            total_sims = len(results_df)
+            # victory_df and tpk_df are already defined if results_df is not empty
+            col1_outcome, col2_outcome = st.columns(2)
+            victory_pct = (len(victory_df) / total_sims * 100) if total_sims > 0 else 0
+            tpk_pct = (len(tpk_df) / total_sims * 100) if total_sims > 0 else 0
+            col1_outcome.metric(
+                "Victories", f"{len(victory_df):,} ({victory_pct:.1f}%)"
+            )
+            col2_outcome.metric("TPKs", f"{len(tpk_df):,} ({tpk_pct:.1f}%)")
+        else:
+            st.write("Run simulation to see combat outcomes.")
+
+        # Analyze partial party casualties
+        st.subheader("Party Casualties Analysis")
+        if (
+            not victory_df.empty and "surviving_party" in victory_df.columns
+        ):  # Check victory_df specifically
+            party_size_val = len(party)
+            casualties_in_victories = {}
+            # Ensure total_sims is defined if results_df was not empty
+            total_sims = len(results_df) if not results_df.empty else 0
+
+            for i_cas in range(1, party_size_val):
+                victories_with_n_casualties = victory_df[
+                    victory_df["surviving_party"] == (party_size_val - i_cas)
+                ]
+                if len(victories_with_n_casualties) > 0 and total_sims > 0:
+                    pct_cas = len(victories_with_n_casualties) / total_sims * 100
+                    casualties_in_victories[i_cas] = pct_cas
+            if casualties_in_victories:
+                st.write("In successful battles:")
+                for casualties, percentage in casualties_in_victories.items():
+                    st.write(
+                        f"- {percentage:.1f}% saw {casualties} {'player' if casualties == 1 else 'players'} fall"
                     )
-                    col2_outcome.metric("TPKs", f"{len(tpk_df):,} ({tpk_pct:.1f}%)")
+            else:
+                st.write(
+                    "In successful battles, the party never suffered casualties (or no victories to analyze)."
+                )
+        else:
+            st.write("Run simulation with victories to analyze party casualties.")
 
-                    # Analyze partial party casualties
-                    st.subheader("Party Casualties Analysis")
-                    if len(victory_df) > 0:
-                        party_size_val = len(party)
-                        casualties_in_victories = {}
-                        for i_cas in range(1, party_size_val):
-                            victories_with_n_casualties = victory_df[
-                                victory_df["surviving_party"]
-                                == (party_size_val - i_cas)
-                            ]
-                            if len(victories_with_n_casualties) > 0:
-                                pct_cas = (
-                                    len(victories_with_n_casualties) / total_sims * 100
-                                )
-                                casualties_in_victories[i_cas] = pct_cas
-                        if casualties_in_victories:
-                            st.write("In successful battles:")
-                            for (
-                                casualties,
-                                percentage,
-                            ) in casualties_in_victories.items():
-                                st.write(
-                                    f"- {percentage:.1f}% saw {casualties} {'player' if casualties == 1 else 'players'} fall"
-                                )
-                        else:
-                            st.write(
-                                "In successful battles, the party never suffered casualties."
-                            )
-                    else:
-                        st.write("No victories to analyze for casualties.")
-
-                    # Combat Duration Statistics
-                    st.subheader("Combat Duration Statistics")
-                    if not results_df.empty:
-                        col1_dur, col2_dur, col3_dur = st.columns(3)
-                        with col1_dur:
-                            if len(victory_df) > 0:
-                                st.write("Victory Round Distribution")
-                                st.bar_chart(
-                                    victory_df["rounds"].value_counts().sort_index()
-                                )
-                                st.metric(
-                                    "Median Victory Round",
-                                    f"{victory_df['rounds'].median():.1f}",
-                                )
-                                st.metric(
-                                    "Mean Victory Round",
-                                    f"{victory_df['rounds'].mean():.1f}",
-                                )
-                            else:
-                                st.write("No victories for round distribution.")
-                        with col2_dur:
-                            if len(tpk_df) > 0:
-                                st.write("TPK Round Distribution")
-                                st.bar_chart(
-                                    tpk_df["rounds"].value_counts().sort_index()
-                                )
-                                st.metric(
-                                    "Median TPK Round",
-                                    f"{tpk_df['rounds'].median():.1f}",
-                                )
-                                st.metric(
-                                    "Mean TPK Round", f"{tpk_df['rounds'].mean():.1f}"
-                                )
-                            else:
-                                st.write("No TPKs for round distribution.")
-                        with col3_dur:
-                            st.write("First Casualty Analysis")
-                            if "first_casualty_round" in results_df.columns:
-                                casualty_data = results_df[
-                                    results_df["first_casualty_round"].notna()
-                                ]
-                                if not casualty_data.empty:
-                                    st.bar_chart(
-                                        casualty_data["first_casualty_round"]
-                                        .value_counts()
-                                        .sort_index()
-                                    )
-                                    st.metric(
-                                        "Avg Round of First Casualty",
-                                        f"{casualty_data['first_casualty_round'].mean():.1f}",
-                                    )
-                                    st.metric(
-                                        "Median Round of First Casualty",
-                                        f"{casualty_data['first_casualty_round'].median():.1f}",
-                                    )
-                                else:
-                                    st.metric(
-                                        "First Casualty", "No casualties recorded"
-                                    )
-                            else:
-                                st.metric("First Casualty", "Tracking not available")
-                    else:
-                        st.write("No simulation data for duration statistics.")
-
-                    # Encounter Balance Verdict
-                    st.subheader("Encounter Balance Analysis")
-                    if len(victory_df) > 0:
-                        victory_rounds = victory_df["rounds"]
-                        round_stats = {
-                            "min": victory_rounds.min(),
-                            "q1": victory_rounds.quantile(0.25),
-                            "median": victory_rounds.median(),
-                            "q3": victory_rounds.quantile(0.75),
-                            "max": victory_rounds.max(),
-                        }
-                        if victory_pct >= 80:
-                            verdict, color, details = (
-                                "Easy Encounter",
-                                "🟢",
-                                "High probability of party victory",
-                            )
-                        elif victory_pct >= 60:
-                            verdict, color, details = (
-                                "Moderate Challenge",
-                                "🟡",
-                                "Party favored but not guaranteed",
-                            )
-                        elif victory_pct >= 40:
-                            verdict, color, details = (
-                                "Hard Challenge",
-                                "🟠",
-                                "Balanced but difficult",
-                            )
-                        elif victory_pct >= 20:
-                            verdict, color, details = (
-                                "Very Hard",
-                                "🔴",
-                                "Party disadvantaged but victory possible",
-                            )
-                        else:
-                            verdict, color, details = (
-                                "Extreme Challenge",
-                                "⚫",
-                                "Victory unlikely",
-                            )
-                        st.markdown(f"### {color} {verdict}")
-                        st.write(details)
-                        st.write("Combat Duration Analysis (Victories):")
-                        st.write(f"- Quickest Victory: Round {round_stats['min']}")
-                        st.write(
-                            f"- Typical Range: Round {round_stats['q1']:.1f} to {round_stats['q3']:.1f}"
+        # Combat Duration Statistics
+        st.subheader("Combat Duration Statistics")
+        if not results_df.empty:
+            col1_dur, col2_dur, col3_dur = st.columns(3)
+            with col1_dur:
+                if not victory_df.empty:  # Check victory_df
+                    st.write("Victory Round Distribution")
+                    st.bar_chart(victory_df["rounds"].value_counts().sort_index())
+                    st.metric(
+                        "Median Victory Round", f"{victory_df['rounds'].median():.1f}"
+                    )
+                    st.metric(
+                        "Mean Victory Round", f"{victory_df['rounds'].mean():.1f}"
+                    )
+                else:
+                    st.write("No victories for round distribution.")
+            with col2_dur:
+                if not tpk_df.empty:  # Check tpk_df
+                    st.write("TPK Round Distribution")
+                    st.bar_chart(tpk_df["rounds"].value_counts().sort_index())
+                    st.metric("Median TPK Round", f"{tpk_df['rounds'].median():.1f}")
+                    st.metric("Mean TPK Round", f"{tpk_df['rounds'].mean():.1f}")
+            with col3_dur:
+                st.write("First Casualty Analysis")
+                if "first_casualty_round" in results_df.columns:
+                    casualty_data = results_df[
+                        results_df["first_casualty_round"].notna()
+                    ]
+                    if not casualty_data.empty:
+                        st.bar_chart(
+                            casualty_data["first_casualty_round"]
+                            .value_counts()
+                            .sort_index()
                         )
-                        st.write(f"- Longest Victory: Round {round_stats['max']}")
-                        if len(tpk_df) > 0:
-                            st.write(
-                                f"- Party Wipe Risk: {tpk_pct:.1f}% chance, typically around round {tpk_df['rounds'].median():.1f}"
-                            )
-                    elif total_sims > 0:
-                        st.markdown("### ⚫ Unwinnable")
-                        st.write("Party unable to achieve victory in any simulation")
-                        if len(tpk_df) > 0:
-                            st.write(
-                                f"Average TPK occurs on round {tpk_df['rounds'].mean():.1f}"
-                            )
-                    else:
-                        st.write("Run simulation to see balance analysis.")
-
-                    # Display sample combat log
-                    if (
-                        "combat_logs" in results_df.columns
-                        and not results_df["combat_logs"].empty
-                        and results_df.loc[0, "combat_logs"]
-                    ):
-                        st.subheader("📜 Sample Combat Log")
-                        if "rng_seed_for_log" not in st.session_state:
-                            st.session_state.rng_seed_for_log = seed
-                        log_rng = np.random.default_rng(
-                            st.session_state.rng_seed_for_log
+                        st.metric(
+                            "Avg Round of First Casualty",
+                            f"{casualty_data['first_casualty_round'].mean():.1f}",
                         )
-                        combat_log_list = results_df.loc[0, "combat_logs"]
-                        if combat_log_list:
-                            sample_idx = log_rng.integers(0, len(combat_log_list))
-                            st.markdown(
-                                '<div class="round-container combat-log">',
-                                unsafe_allow_html=True,
-                            )
-                            st.markdown(combat_log_list[sample_idx])
-                            st.markdown("</div>", unsafe_allow_html=True)
-                        else:
-                            st.write("No combat logs generated.")
+                        st.metric(
+                            "Median Round of First Casualty",
+                            f"{casualty_data['first_casualty_round'].median():.1f}",
+                        )
                     else:
-                        st.write("No combat log available.")
+                        st.metric("First Casualty", "No casualties recorded")
+                else:
+                    st.metric("First Casualty", "Tracking not available or no data")
+        else:
+            st.write("Run simulation to see duration statistics.")
 
-                    # Download button
-                    csv = results_df.to_csv(index=False)
-                    st.download_button(
-                        "Download Raw Simulation Data",
-                        csv,
-                        "encounter_simulation_results.csv",
-                        "text/csv",
-                        key="sim_download_button",
-                    )
+        # Encounter Balance Verdict
+        st.subheader("Encounter Balance Analysis")
+        if not victory_df.empty:  # Check victory_df
+            victory_rounds = victory_df["rounds"]
+            round_stats = {
+                "min": victory_rounds.min(),
+                "q1": victory_rounds.quantile(0.25),
+                "median": victory_rounds.median(),
+                "q3": victory_rounds.quantile(0.75),
+                "max": victory_rounds.max(),
+            }
+            # Ensure victory_pct is defined if victory_df is not empty
+            total_sims = len(results_df)  # Should be > 0 if victory_df is not empty
+            victory_pct = (len(victory_df) / total_sims * 100) if total_sims > 0 else 0
+
+            if victory_pct >= 80:
+                verdict, color, details = (
+                    "Easy Encounter",
+                    "🟢",
+                    "High probability of party victory",
+                )
+            elif victory_pct >= 60:
+                verdict, color, details = (
+                    "Moderate Challenge",
+                    "🟡",
+                    "Party favored but not guaranteed",
+                )
+            elif victory_pct >= 40:
+                verdict, color, details = (
+                    "Hard Challenge",
+                    "🟠",
+                    "Balanced but difficult",
+                )
+            elif victory_pct >= 20:
+                verdict, color, details = (
+                    "Very Hard",
+                    "🔴",
+                    "Party disadvantaged but victory possible",
+                )
+            else:
+                verdict, color, details = (
+                    "Extreme Challenge",
+                    "⚫",
+                    "Victory unlikely",
+                )
+            st.markdown(f"### {color} {verdict}")
+            st.write(details)
+            st.write("Combat Duration Analysis (Victories):")
+            st.write(f"- Quickest Victory: Round {round_stats['min']}")
+            st.write(
+                f"- Typical Range: Round {round_stats['q1']:.1f} to {round_stats['q3']:.1f}"
+            )
+            st.write(f"- Longest Victory: Round {round_stats['max']}")
+            if not tpk_df.empty:  # check tpk_df
+                tpk_pct = (len(tpk_df) / total_sims * 100) if total_sims > 0 else 0
+                st.write(
+                    f"- Party Wipe Risk: {tpk_pct:.1f}% chance, typically around round {tpk_df['rounds'].median():.1f}"
+                )
+        elif not results_df.empty:  # No victories, but simulation was run
+            st.markdown("### ⚫ Unwinnable")
+            st.write("Party unable to achieve victory in any simulation")
+            if not tpk_df.empty:  # check tpk_df
+                st.write(f"Average TPK occurs on round {tpk_df['rounds'].mean():.1f}")
+        else:  # results_df is empty (simulation not run)
+            st.write("Run simulation to see balance analysis.")
+
+        # Display sample combat log
+        if (
+            not results_df.empty
+            and "combat_logs" in results_df.columns
+            and results_df.loc[0, "combat_logs"]
+        ):
+            st.subheader("📜 Sample Combat Log")
+            if "rng_seed_for_log" not in st.session_state:
+                st.session_state.rng_seed_for_log = seed  # seed is from sidebar
+            log_rng = np.random.default_rng(st.session_state.rng_seed_for_log)
+            combat_log_list = results_df.loc[0, "combat_logs"]
+            if combat_log_list:  # Should always be true if outer condition met
+                sample_idx = log_rng.integers(0, len(combat_log_list))
+                st.markdown(
+                    '<div class="round-container combat-log">', unsafe_allow_html=True
+                )
+                st.markdown(combat_log_list[sample_idx])
+                st.markdown("</div>", unsafe_allow_html=True)
+            # else case not strictly needed due to outer check, but good for safety if structure changes
+            # else:
+            #     st.write("No combat logs available in this sample.")
+        elif (
+            not results_df.empty
+        ):  # Sim run, but no logs (should not happen with current logic)
+            st.write("No combat logs generated or available in this sample.")
+        # If results_df is empty, nothing is displayed here, which is fine. Add message if desired:
+        # else:
+        # st.write("Run simulation to generate combat logs.")
+
+        # Download button
+        if not results_df.empty:
+            csv = results_df.to_csv(index=False)
+            st.download_button(
+                "Download Raw Simulation Data",
+                csv,
+                "encounter_simulation_results.csv",
+                "text/csv",
+                key="sim_download_button",
+            )
+        else:
+            st.button(
+                "Download Raw Simulation Data",
+                disabled=True,
+                help="Run simulation to generate data for download.",
+                key="sim_download_button_disabled",  # Different key if needed
+            )
 
     with tab2:  ########## ENCOUNTER BUILDER TAB ##########
         st.header("Build an Encounter to Meet Specific Outcomes")
@@ -1392,217 +1439,203 @@ def main():
                         "Initial template resulted in no enemies."
                     )
                 else:
-                    current_enemies = copy.deepcopy(initial_generated_enemies_list)
-
                     # --- Builder Loop Parameters ---
                     max_builder_iterations = 20
                     sim_iters_for_iteration = 100
                     sim_iters_for_final = 10000
                     encounter_found_within_tolerance = False
 
-                    # --- Main Iteration Loop ---
-                    for iter_num in range(max_builder_iterations):
+                    # --- Simple Sequential Rule Application ---
+                    current_enemies = copy.deepcopy(initial_generated_enemies_list)
+
+                    # Check if initial template is already in tolerance
+                    rng_initial_check = np.random.default_rng(seed)
+                    initial_results_df = simulate_encounter(
+                        party,
+                        current_enemies,
+                        sim_iters_for_iteration,
+                        rng_initial_check,
+                    )
+                    initial_metric = get_metric_from_df(
+                        initial_results_df, optimization_goal
+                    )
+                    st.session_state.builder_iteration_log.append(
+                        f"Initial template metric: {initial_metric:.1f}% (Target: {target_percentage}%)"
+                    )
+
+                    if (
+                        abs(initial_metric - target_percentage)
+                        <= TARGET_METRIC_TOLERANCE
+                    ):
                         st.session_state.builder_iteration_log.append(
-                            f"\n🔄 Iteration {iter_num + 1}/{max_builder_iterations}:"
+                            f"✅ Initial template already within tolerance! Finalizing."
                         )
-
-                        # Simulate current_enemies with fewer iterations
-                        rng_build_iter = np.random.default_rng(seed)
-                        iter_results_df = simulate_encounter(
-                            party,
-                            current_enemies,
-                            sim_iters_for_iteration,
-                            rng_build_iter,
-                        )
-                        current_metric_value = get_metric_from_df(
-                            iter_results_df, optimization_goal
-                        )
-
-                        current_enemies_summary_text = "; ".join(
-                            summarize_enemies(current_enemies)
-                        )
-                        st.session_state.builder_iteration_log.append(
-                            f"  Current state ({len(current_enemies)} enemies: {current_enemies_summary_text})"
-                        )
-                        st.session_state.builder_iteration_log.append(
-                            f"  Simulated ({sim_iters_for_iteration} iters). Goal: '{optimization_goal}', Current Value: {current_metric_value:.1f}%"
-                        )
-
-                        # Check tolerance
-                        if (
-                            abs(current_metric_value - target_percentage)
-                            <= TARGET_METRIC_TOLERANCE
-                        ):
-                            st.session_state.builder_iteration_log.append(
-                                f"  ✅ Metric {current_metric_value:.1f}% is within tolerance (±{TARGET_METRIC_TOLERANCE}%) of target {target_percentage}%."
-                            )
-                            st.session_state.builder_status_message = "Encounter within tolerance found. Running final simulation..."
-
-                            final_rng = np.random.default_rng(seed)
-                            final_results_df = simulate_encounter(
-                                party, current_enemies, sim_iters_for_final, final_rng
-                            )
-                            st.session_state.builder_final_sim_results = (
-                                final_results_df
-                            )
-                            st.session_state.builder_final_enemies_raw = copy.deepcopy(
-                                current_enemies
-                            )
-                            st.session_state.builder_final_encounter_summary = (
-                                summarize_enemies(current_enemies, detail=True)
-                            )
-                            final_metric_value = get_metric_from_df(
-                                final_results_df, optimization_goal
-                            )
-                            st.session_state.builder_iteration_log.append(
-                                f"  Final simulation ({sim_iters_for_final} iterations). Metric: {final_metric_value:.1f}%."
-                            )
-                            st.session_state.builder_status_message = f"🎉 Encounter generated! Final Metric ({optimization_goal.split('Target ')[1]}): {final_metric_value:.1f}%"
-                            encounter_found_within_tolerance = True
-                            break  # Exit main iteration loop
-
-                        # --- Core Adjustment Logic ---
-                        param_adjustment_scalar = 0
+                        encounter_found_within_tolerance = True
+                    else:
+                        # Determine direction needed
                         if optimization_goal == "Target Victory %":
-                            if (
-                                current_metric_value < target_percentage
-                            ):  # Vic % too low, make encounter easier
-                                param_adjustment_scalar = -1  # Decrease enemy params
-                            elif (
-                                current_metric_value > target_percentage
-                            ):  # Vic % too high, make encounter harder
-                                param_adjustment_scalar = 1  # Increase enemy params
+                            need_harder = initial_metric > target_percentage
                         elif optimization_goal == "Target First Casualty %":
-                            if (
-                                current_metric_value < target_percentage
-                            ):  # FC % too low, make encounter harder
-                                param_adjustment_scalar = 1  # Increase enemy params
-                            elif (
-                                current_metric_value > target_percentage
-                            ):  # FC % too high, make encounter easier
-                                param_adjustment_scalar = -1  # Decrease enemy params
+                            need_harder = initial_metric < target_percentage
 
-                        if param_adjustment_scalar == 0:
-                            st.session_state.builder_iteration_log.append(
-                                "  🤔 Metric is exactly on target, but not within tolerance band (this shouldn't usually happen here if tolerance check passed). No adjustment direction."
-                            )
-                            # This case implies current_metric_value == target_percentage but abs(diff) > tolerance, which is impossible.
-                            # Or, it means it's on target and the tolerance check above didn't catch it. For safety, break.
-                            break  # Exit main iteration loop if no clear direction
-
+                        adjustment_direction = 1 if need_harder else -1
+                        direction_desc = "harder" if need_harder else "easier"
                         st.session_state.builder_iteration_log.append(
-                            f"  Target: {target_percentage}%, Current: {current_metric_value:.1f}%. Need to {'increase' if param_adjustment_scalar == 1 else 'decrease'} enemy difficulty."
+                            f"Need to make encounter {direction_desc} (adjustment direction: {adjustment_direction})"
                         )
 
+                        # Apply each rule sequentially
                         adjustment_rules = selected_template_info["adjustment_priority"]
-                        improvement_found_this_iteration = False
-
                         for rule_idx, rule in enumerate(adjustment_rules):
-                            # Resolve max_increase if it's a lambda function
+                            st.session_state.builder_iteration_log.append(
+                                f"\n📐 Rule {rule_idx + 1}/{len(adjustment_rules)}: {rule['param']} for {rule['target_enemy_type']}"
+                            )
+                            st.session_state.builder_iteration_log.append(
+                                f"  Starting with: {'; '.join(summarize_enemies(current_enemies))}"
+                            )
+
+                            # Resolve max_increase if it's a lambda
                             max_increase_val = rule["max_increase"]
                             if callable(max_increase_val):
                                 max_increase_val = max_increase_val(party_size)
 
-                            # Create a *candidate* set of enemies by applying the current rule
-                            # Pass the original template definitions for cloning if count increases
-                            candidate_enemies, adj_desc = apply_single_adjustment(
-                                current_enemies,
-                                template_enemy_defs_for_generation,  # Base definitions from the selected template
-                                rule,
-                                party_size,
-                                param_adjustment_scalar,
-                            )
-                            st.session_state.builder_iteration_log.append(
-                                f"    Rule {rule_idx + 1}/{len(adjustment_rules)}: Attempting '{adj_desc}'"
+                            # Apply this rule step by step until max or target reached
+                            step_size = rule["step"]
+                            max_steps = (
+                                max_increase_val // step_size if step_size > 0 else 0
                             )
 
-                            # Simulate these candidate enemies
-                            rng_candidate_sim = np.random.default_rng(
-                                seed
-                            )  # Potentially vary seed or use a different one?
-                            candidate_results_df = simulate_encounter(
-                                party,
-                                candidate_enemies,
-                                sim_iters_for_iteration,
-                                rng_candidate_sim,
-                            )
-                            candidate_metric_value = get_metric_from_df(
-                                candidate_results_df, optimization_goal
-                            )
-                            candidate_enemies_summary_text = "; ".join(
-                                summarize_enemies(candidate_enemies)
-                            )
-                            st.session_state.builder_iteration_log.append(
-                                f"      Candidate state ({len(candidate_enemies)} enemies: {candidate_enemies_summary_text})"
-                            )
-                            st.session_state.builder_iteration_log.append(
-                                f"      Candidate metric: {candidate_metric_value:.1f}% (vs current: {current_metric_value:.1f}%)"
-                            )
+                            # Start with current state and push this rule to maximum
+                            rule_start_enemies = copy.deepcopy(current_enemies)
 
-                            # Check for improvement: Is the candidate metric closer to the target?
-                            current_distance_to_target = abs(
-                                current_metric_value - target_percentage
-                            )
-                            candidate_distance_to_target = abs(
-                                candidate_metric_value - target_percentage
-                            )
-
-                            if (
-                                candidate_distance_to_target
-                                < current_distance_to_target
-                            ):
-                                current_enemies = copy.deepcopy(candidate_enemies)
-                                st.session_state.builder_iteration_log.append(
-                                    f"    👍 Improvement found! New metric: {candidate_metric_value:.1f}%. Adopting change."
-                                )
-                                improvement_found_this_iteration = True
-                                break  # Break from rules loop, start new main iteration with improved enemies
-                            else:
-                                st.session_state.builder_iteration_log.append(
-                                    f"    👎 No improvement or worsened. Distance to target: current {current_distance_to_target:.2f}, candidate {candidate_distance_to_target:.2f}."
+                            for step_num in range(1, max_steps + 1):
+                                # Apply this step (cumulative from rule start, not overall start)
+                                test_enemies, step_desc = apply_single_adjustment(
+                                    rule_start_enemies,  # Start from beginning of this rule
+                                    template_enemy_defs_for_generation,
+                                    rule,
+                                    party_size,
+                                    adjustment_direction
+                                    * step_num,  # Cumulative steps for this rule
                                 )
 
-                        if not improvement_found_this_iteration:
-                            st.session_state.builder_iteration_log.append(
-                                "  ⚠️ No rule in this iteration led to an improvement. Builder stuck."
-                            )
-                            break  # Exit main iteration loop as we are stuck
-                        # --- End of Core Adjustment Logic ---
+                                # Simulate the test
+                                rng_test = np.random.default_rng(seed)
+                                test_results_df = simulate_encounter(
+                                    party,
+                                    test_enemies,
+                                    sim_iters_for_iteration,
+                                    rng_test,
+                                )
+                                test_metric = get_metric_from_df(
+                                    test_results_df, optimization_goal
+                                )
 
-                    # --- After loop (if not broken by tolerance success already) ---
-                    if not encounter_found_within_tolerance:
-                        if iter_num == max_builder_iterations - 1:
-                            st.session_state.builder_iteration_log.append(
-                                f"  🚫 Reached max iterations ({max_builder_iterations})."
-                            )
-                            st.session_state.builder_status_message = f"Reached max iterations. Best attempt metric: {current_metric_value:.1f}% (Target: {target_percentage}%)."
-                        # else: The loop might have broken for other reasons (e.g. stuck - to be implemented)
+                                st.session_state.builder_iteration_log.append(
+                                    f"  Step {step_num}/{max_steps}: {len(test_enemies)} enemies, metric: {test_metric:.1f}%"
+                                )
 
-                        # Store the current state as the best attempt if no tolerant solution was found
+                                # Always adopt this step (we're pushing to maximum)
+                                current_enemies = copy.deepcopy(test_enemies)
+
+                                # Check if we're in tolerance
+                                if (
+                                    abs(test_metric - target_percentage)
+                                    <= TARGET_METRIC_TOLERANCE
+                                ):
+                                    st.session_state.builder_iteration_log.append(
+                                        f"  🎯 Target reached! Finalizing with this configuration."
+                                    )
+                                    encounter_found_within_tolerance = True
+                                    break
+
+                            if encounter_found_within_tolerance:
+                                break  # Exit rule loop
+
+                            # Log the final state after this rule
+                            st.session_state.builder_iteration_log.append(
+                                f"  ✅ Rule {rule_idx + 1} completed. New state: {'; '.join(summarize_enemies(current_enemies))}"
+                            )
+
+                    # --- Final simulation and results ---
+                    if encounter_found_within_tolerance:
+                        st.session_state.builder_status_message = "Encounter within tolerance found. Running final simulation..."
+                    else:
+                        st.session_state.builder_status_message = "Could not reach target with available rules. Using best attempt..."
+
+                    # Final high-iteration simulation
+                    final_rng = np.random.default_rng(seed)
+                    final_results_df = simulate_encounter(
+                        party, current_enemies, sim_iters_for_final, final_rng
+                    )
+                    st.session_state.builder_final_sim_results = final_results_df
+                    st.session_state.builder_final_enemies_raw = copy.deepcopy(
+                        current_enemies
+                    )
+                    st.session_state.builder_final_encounter_summary = (
+                        summarize_enemies(current_enemies, detail=False)
+                    )  # Use compact summary
+
+                    final_metric_value = get_metric_from_df(
+                        final_results_df, optimization_goal
+                    )
+                    st.session_state.builder_iteration_log.append(
+                        f"\n🎯 Final simulation ({sim_iters_for_final} iterations): {final_metric_value:.1f}%"
+                    )
+
+                    # --- Auto-populate sidebar enemy configuration ---
+                    def store_suggested_encounter(enemies_list):
+                        """Store suggested encounter for later application to sidebar."""
+                        # Map template types to sidebar indices
+                        type_to_index = {
+                            "Minion": 0,
+                            "Soldier": 1,
+                            "Elite": 2,
+                            "Boss": 3,
+                        }
+
+                        # Group enemies by type and stats
+                        enemy_groups = {}
+                        for enemy in enemies_list:
+                            enemy_type = getattr(enemy, "type_for_template", "Minion")
+                            key = (enemy_type, enemy.hp, enemy.dr, enemy.damage_dice)
+                            if key not in enemy_groups:
+                                enemy_groups[key] = 0
+                            enemy_groups[key] += 1
+
+                        # Store suggested configuration
+                        suggested_config = {}
+                        for i in range(4):  # Initialize all to 0
+                            suggested_config[f"count_{i}"] = 0
+                            suggested_config[f"hp_{i}"] = 5  # Default values
+                            suggested_config[f"dr_{i}"] = 0
+                            suggested_config[f"dice_{i}"] = "1d4"
+
+                        # Fill in the actual suggested values
+                        for (
+                            enemy_type,
+                            hp,
+                            dr,
+                            damage_dice,
+                        ), count in enemy_groups.items():
+                            if enemy_type in type_to_index:
+                                idx = type_to_index[enemy_type]
+                                suggested_config[f"count_{idx}"] = count
+                                suggested_config[f"hp_{idx}"] = hp
+                                suggested_config[f"dr_{idx}"] = dr
+                                suggested_config[f"dice_{idx}"] = damage_dice
+
+                        st.session_state.builder_suggested_config = suggested_config
                         st.session_state.builder_iteration_log.append(
-                            f"  Storing current state as best attempt."
+                            f"📋 Suggested encounter configuration stored. Use 'Apply to Simulator' button to load it."
                         )
-                        final_rng = np.random.default_rng(seed)
-                        final_results_df = simulate_encounter(
-                            party, current_enemies, sim_iters_for_final, final_rng
-                        )  # Final sim on best effort
-                        st.session_state.builder_final_sim_results = final_results_df
-                        st.session_state.builder_final_enemies_raw = copy.deepcopy(
-                            current_enemies
-                        )
-                        st.session_state.builder_final_encounter_summary = (
-                            summarize_enemies(current_enemies, detail=True)
-                        )
-                        final_metric_value_best_effort = get_metric_from_df(
-                            final_results_df, optimization_goal
-                        )
-                        if not st.session_state.builder_status_message.startswith(
-                            "Reached max iterations"
-                        ):
-                            st.session_state.builder_status_message = f"⚠️ Could not reach target within tolerance. Best attempt metric: {final_metric_value_best_effort:.1f}%"
-                        st.session_state.builder_iteration_log.append(
-                            f"  Final simulation of best attempt ({sim_iters_for_final} iters). Metric: {final_metric_value_best_effort:.1f}%."
-                        )
+
+                    store_suggested_encounter(current_enemies)
+
+                    if encounter_found_within_tolerance:
+                        st.session_state.builder_status_message = f"🎉 Encounter generated! Final Metric ({optimization_goal.split('Target ')[1]}): {final_metric_value:.1f}%"
+                    else:
+                        st.session_state.builder_status_message = f"⚠️ Best attempt: {final_metric_value:.1f}% (Target: {target_percentage}%)"
 
         # --- Display Area for Builder (Modified) ---
         if "builder_status_message" in st.session_state:
@@ -1627,6 +1660,24 @@ def main():
             for item in st.session_state.builder_final_encounter_summary:
                 st.markdown(f"- {item}")
 
+            # Add Apply to Simulator button
+            if "builder_suggested_config" in st.session_state:
+                col1, col2 = st.columns([1, 2])
+                with col1:
+                    if st.button(
+                        "🔄 Apply to Simulator",
+                        help="Load this encounter into the sidebar for simulation",
+                    ):
+                        # Store config as pending (to be applied on next page load)
+                        st.session_state.builder_pending_config = (
+                            st.session_state.builder_suggested_config.copy()
+                        )
+                        st.rerun()
+                with col2:
+                    st.info(
+                        "💡 Click to load this encounter into the Combat Simulator tab's enemy configuration."
+                    )
+
             if (
                 "builder_final_sim_results" in st.session_state
                 and st.session_state.builder_final_sim_results is not None
@@ -1646,87 +1697,7 @@ def main():
                     f"Expected First Casualty % (after {len(results_df_final_display)} sims)",
                     f"{final_fc_pct:.1f}%",
                 )
-        else:
-            # Display old results if new builder hasn't produced final results yet, or provide a placeholder
-            # This handles the case before the new button is ever pressed, or if it stops early without final results.
-            if (
-                "initial_sim_results" in st.session_state
-                and st.session_state.initial_sim_results is not None
-            ):
-                st.markdown("--- ")
-                st.markdown(
-                    "### Initial Template Simulation (from previous single step run)"
-                )
-                if (
-                    "initial_template_summary" in st.session_state
-                    and st.session_state.initial_template_summary
-                ):
-                    st.markdown("**Generated Encounter:**")
-                    for item in st.session_state.initial_template_summary:
-                        st.markdown(f"- {item}")
-                results_df_initial_display = st.session_state.initial_sim_results
-                vic_pct_init_disp = get_metric_from_df(
-                    results_df_initial_display, "Target Victory %"
-                )
-                fc_pct_init_disp = get_metric_from_df(
-                    results_df_initial_display, "Target First Casualty %"
-                )
-                st.metric("Initial Victory %", f"{vic_pct_init_disp:.1f}%")
-                st.metric("Initial First Casualty %", f"{fc_pct_init_disp:.1f}%")
-
-            if (
-                "adjusted_sim_results" in st.session_state
-                and st.session_state.adjusted_sim_results is not None
-            ):
-                st.markdown("--- ")
-                st.markdown(
-                    "### After 1st Adjustment Attempt (from previous single step run)"
-                )
-                st.write(st.session_state.get("adjustment_description", ""))
-                if (
-                    "adjusted_enemies_summary" in st.session_state
-                    and st.session_state.adjusted_enemies_summary
-                ):
-                    st.markdown("**Adjusted Encounter Details:**")
-                    with st.expander("Show Full Adjusted Enemy List"):
-                        for item in st.session_state.adjusted_enemies_summary:
-                            st.markdown(f"- {item}")
-                results_df_adj_display = st.session_state.adjusted_sim_results
-                vic_pct_adj_disp = get_metric_from_df(
-                    results_df_adj_display, "Target Victory %"
-                )
-                fc_pct_adj_disp = get_metric_from_df(
-                    results_df_adj_display, "Target First Casualty %"
-                )
-                st.metric("Adjusted Victory %", f"{vic_pct_adj_disp:.1f}%")
-                st.metric("Adjusted First Casualty %", f"{fc_pct_adj_disp:.1f}%")
-            elif (
-                "builder_status_message" not in st.session_state
-            ):  # If no new run and no old runs
-                st.markdown("---")
-                st.json(
-                    {
-                        "Enemies": [
-                            {
-                                "Type": "Soldier",
-                                "Count": 2,
-                                "HP": 15,
-                                "DR": 3,
-                                "Damage": "2d6",
-                            },
-                            {
-                                "Type": "Minion",
-                                "Count": 4,
-                                "HP": 5,
-                                "DR": 0,
-                                "Damage": "1d4",
-                            },
-                        ],
-                        "Expected Victory %": "XX.X%",
-                        "Expected First Casualty %": "YY.Y%",
-                    },
-                    expanded=False,
-                )
+            # If no builder results yet, just show nothing instead of placeholder JSON
 
         st.markdown("---")
         # Removed the old static JSON placeholder, as the logic above will show something more relevant
