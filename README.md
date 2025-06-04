@@ -80,6 +80,25 @@ To run locally:
    streamlit run encounter_sim.py
    ```
 
+## Building a macOS Application
+
+You can create a standalone macOS binary using PyInstaller. This bundles the
+simulator and all of its dependencies so it can be launched like any other Mac
+application.
+
+1. Ensure Python 3.12 is installed on your Mac.
+2. Install the required packages for packaging:
+   ```bash
+   pip install -r requirements.txt
+   pip install pyinstaller
+   ```
+3. Run the build script:
+   ```bash
+   ./build_mac.sh
+   ```
+4. The resulting application will be located in the `dist/` folder.
+
+
 ## Contributing
 
 Feel free to open issues or submit pull requests with improvements or bug fixes.
